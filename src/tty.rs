@@ -5,7 +5,6 @@ use crate::resource::Shared;
 use anyhow::Result;
 use crossterm::terminal;
 use std::io;
-use std::io::Write;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -48,6 +47,16 @@ pub struct TtyHandle {
 }
 
 impl TtyHandle {
+    /// Writes the provided data to the stream and flushes it immediately.
+    fn write_to_stream<S, D>(&self, stream: &mut S, data: D)
+    where
+        S: io::Write,
+        D: AsRef<[u8]>,
+    {
+        stream.write_all(data.as_ref()).unwrap();
+        stream.flush().unwrap();
+    }
+
     /// Writes data to the stdout stream.
     pub fn write<D>(&self, data: D)
     where
@@ -57,8 +66,17 @@ impl TtyHandle {
         // The bytes are written immediately when this function is called.
         let mut stdout = io::stdout().lock();
 
-        stdout.write_all(data.as_ref()).unwrap();
-        stdout.flush().unwrap();
+        self.write_to_stream(&mut stdout, data.as_ref());
+    }
+
+    /// Writes data to the stderr stream.
+    pub fn write_error<D>(&self, data: D)
+    where
+        D: AsRef<[u8]>,
+    {
+        let mut stderr = io::stderr().lock();
+
+        self.write_to_stream(&mut stderr, data.as_ref());
     }
 
     /// Starts reading from the TTY.
