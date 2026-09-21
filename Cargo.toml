@@ -2,7 +2,7 @@
 name = "crabuv"
 description = "A multi-platform event loop library 🎡"
 authors = ["Alex Alikiotis <alexalikiotis5@gmail.com>"]
-version = "0.3.0"
+version = "0.4.0"
 repository = "https://gitlab.com/aalykiot/crabuv"
 license = "MIT"
 readme = "README.md"
@@ -14,10 +14,10 @@ edition = "2021"
 anyhow = "1.0.104"
 rayon = "1.12.0"
 downcast-rs = { version = "2.0.2", default-features = false }
-mio = { version = "1.2.2", features = ["os-poll", "net"] }
+mio = { version = "1.2.3", features = ["os-poll", "net"] }
 notify = "8.2.0"
 slotmap = "1.1.1"
-rand = "0.10.2"
+rand = "0.10.3"
 crossterm = "0.29.0"
 
 [dependencies.signal-hook]
