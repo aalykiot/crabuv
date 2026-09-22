@@ -7,11 +7,12 @@ use anyhow::Result;
 use crabuv::tty::TtyHandle;
 use crabuv::EventLoop;
 use crabuv::RunMode;
+use std::os::fd::AsRawFd;
 
 fn main() {
     let mut event_loop = EventLoop::default();
     let handle = event_loop.handle();
-    let tty = handle.tty();
+    let tty = handle.tty(std::io::stdin().as_raw_fd());
 
     tty.start_reading(|tty: TtyHandle, data: Result<Vec<u8>>| match data {
         Ok(bytes) => {

@@ -10,6 +10,7 @@ use crabuv::tty::TtyHandle;
 use crabuv::EventLoop;
 use crabuv::RunMode;
 use std::ops::RangeInclusive;
+use std::os::fd::AsRawFd;
 
 const PRINTABLE_RANGE: RangeInclusive<u8> = 32..=126;
 
@@ -44,7 +45,7 @@ fn handle_input(tty: TtyHandle, data: Result<Vec<u8>>) {
 fn main() {
     let mut event_loop = EventLoop::default();
     let handle = event_loop.handle();
-    let tty = handle.tty();
+    let tty = handle.tty(std::io::stdin().as_raw_fd());
 
     if let Err(e) = tty.set_mode(Mode::Raw) {
         eprintln!("Failed to enter raw mode: {e}");
