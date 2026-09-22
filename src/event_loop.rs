@@ -31,6 +31,7 @@ use crate::timers::Timer;
 use crate::timers::TimerHandle;
 use crate::timers::TimerKind;
 use crate::timers::TimersCollection;
+use crate::tty::FileDescriptor;
 use crate::tty::TtyHandle;
 use crate::tty::TtyReader;
 use anyhow::anyhow;
@@ -679,7 +680,9 @@ impl EventLoop {
     fn tty_read_start(&mut self, reader: Box<TtyReader>, stop_rx: mpsc::Receiver<()>) {
         // The reason we insert the stream to the map and then we get a reference
         // is so we can create a token with the correct resource ID.
+        let mut stream = reader.get_stream();
         let (_, noop_cancellation) = mpsc::channel();
+
         let id_slot = Rc::clone(&reader.id);
         let id = self.resources.insert(reader);
 
@@ -690,14 +693,13 @@ impl EventLoop {
             let event_sender = self.event_sender.clone();
             let waker = Arc::clone(&self.waker);
             move || {
-                // Buffer to store stdin read bytes.
+                // Buffer to store read bytes.
                 let mut buffer = [0u8; 1024];
-                let mut stdin = io::stdin().lock();
 
                 // Keep reading from stdin until the TTY handle signals that
                 // reading should stop.
                 while stop_rx.try_recv().is_err() {
-                    let result = stdin
+                    let result = stream
                         .read(&mut buffer)
                         .map(|n| buffer[..n].to_vec())
                         .map_err(Into::into);
@@ -1065,14 +1067,14 @@ impl LoopHandle {
         self.request_queue_empty.set(false);
     }
 
-    /// Creates a TTY handle for interacting with the terminal.
-    pub fn tty(&self) -> TtyHandle {
+    /// Creates a TTY handle wrapping the given file descriptor.
+    pub fn tty(&self, raw_fd: FileDescriptor) -> TtyHandle {
         // TTY resources are added to the resource map only after they start
         // reading terminal input, so for now we'll assign them a null ID.
         let id = Rc::new(Cell::new(DefaultKey::null()));
         let handle = self.clone();
 
-        TtyHandle { id, handle }
+        TtyHandle { id, raw_fd, handle }
     }
 
     /// Starts reading from the TTY stream.

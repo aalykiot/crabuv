@@ -8,10 +8,21 @@ use crabuv::tty::TtyHandle;
 use crabuv::EventLoop;
 use crabuv::RunMode;
 
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+
 fn main() {
     let mut event_loop = EventLoop::default();
     let handle = event_loop.handle();
-    let tty = handle.tty();
+
+    #[cfg(unix)]
+    let stdin = std::io::stdin().as_raw_fd();
+    #[cfg(windows)]
+    let stdin = std::io::stdin().as_raw_handle();
+
+    let tty = handle.tty(stdin);
 
     tty.start_reading(|tty: TtyHandle, data: Result<Vec<u8>>| match data {
         Ok(bytes) => {
