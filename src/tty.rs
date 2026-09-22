@@ -151,12 +151,13 @@ impl From<FileDescriptor> for FileDescriptorStream {
 
     #[cfg(windows)]
     fn from(value: FileDescriptor) -> Self {
-        use std::os::windows::BorrowedHandle;
-        use std::os::windows::FromRawHandle;
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::io::BorrowedHandle;
+        use std::os::windows::io::FromRawHandle;
 
         // Safety: fd is valid for the duration of this call.
         let borrowed = unsafe { BorrowedHandle::borrow_raw(value) };
-        let mut file =
+        let file =
             unsafe { ManuallyDrop::new(fs::File::from_raw_handle(borrowed.as_raw_handle())) };
 
         FileDescriptorStream { file }
