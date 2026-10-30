@@ -22,7 +22,13 @@ fn main() {
     #[cfg(windows)]
     let stdin = std::io::stdin().as_raw_handle();
 
-    let tty = handle.tty(stdin);
+    let tty = match handle.tty(stdin) {
+        Ok(tty) => tty,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
 
     tty.start_reading(|tty: TtyHandle, data: Result<Vec<u8>>| match data {
         Ok(bytes) => {

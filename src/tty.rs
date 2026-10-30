@@ -178,3 +178,15 @@ impl std::io::Write for FileDescriptorStream {
         self.file.flush()
     }
 }
+
+#[cfg(unix)]
+pub fn is_tty(fd: &FileDescriptor) -> bool {
+    use crossterm::tty::IsTty;
+    fd.is_tty()
+}
+
+#[cfg(windows)]
+pub fn is_tty(fd: &FileDescriptor) -> bool {
+    // TODO: implement a version for windows..
+    panic!("not yet implemented");
+}

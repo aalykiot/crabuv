@@ -31,10 +31,12 @@ use crate::timers::Timer;
 use crate::timers::TimerHandle;
 use crate::timers::TimerKind;
 use crate::timers::TimersCollection;
+use crate::tty::is_tty;
 use crate::tty::FileDescriptor;
 use crate::tty::TtyHandle;
 use crate::tty::TtyReader;
 use anyhow::anyhow;
+use anyhow::bail;
 use anyhow::Result;
 use mio::net::TcpListener as MioListener;
 use mio::net::TcpStream as MioSocket;
@@ -1068,13 +1070,18 @@ impl LoopHandle {
     }
 
     /// Creates a TTY handle wrapping the given file descriptor.
-    pub fn tty(&self, raw_fd: FileDescriptor) -> TtyHandle {
+    pub fn tty(&self, raw_fd: FileDescriptor) -> Result<TtyHandle> {
+        // Not all file descriptors are TTYs.
+        if !is_tty(&raw_fd) {
+            bail!("file descriptor {} is not a TTY", raw_fd);
+        }
+
         // TTY resources are added to the resource map only after they start
         // reading terminal input, so for now we'll assign them a null ID.
         let id = Rc::new(Cell::new(DefaultKey::null()));
         let handle = self.clone();
 
-        TtyHandle { id, raw_fd, handle }
+        Ok(TtyHandle { id, raw_fd, handle })
     }
 
     /// Starts reading from the TTY stream.
