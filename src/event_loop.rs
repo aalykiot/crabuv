@@ -1072,8 +1072,8 @@ impl LoopHandle {
     /// Creates a TTY handle wrapping the given file descriptor.
     pub fn tty(&self, raw_fd: FileDescriptor) -> Result<TtyHandle> {
         // Not all file descriptors are TTYs.
-        if !is_tty(&raw_fd) {
-            bail!("file descriptor {} is not a TTY", raw_fd);
+        if !is_tty(raw_fd) {
+            bail!("The file descriptor provided is not a TTY");
         }
 
         // TTY resources are added to the resource map only after they start

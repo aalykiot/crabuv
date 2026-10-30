@@ -180,13 +180,20 @@ impl std::io::Write for FileDescriptorStream {
 }
 
 #[cfg(unix)]
-pub fn is_tty(fd: &FileDescriptor) -> bool {
+pub fn is_tty(fd: FileDescriptor) -> bool {
     use crossterm::tty::IsTty;
     fd.is_tty()
 }
 
 #[cfg(windows)]
-pub fn is_tty(fd: &FileDescriptor) -> bool {
-    // TODO: implement a version for windows..
-    panic!("not yet implemented");
+pub fn is_tty(fd: FileDescriptor) -> bool {
+    use std::io::IsTerminal;
+    use std::os::windows::io::BorrowedHandle;
+
+    if fd.is_null() || fd as isize == -1 {
+        return false;
+    }
+
+    let handle = unsafe { BorrowedHandle::borrow_raw(fd) };
+    handle.is_terminal()
 }
