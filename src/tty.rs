@@ -186,6 +186,7 @@ pub fn is_tty(fd: FileDescriptor) -> bool {
 }
 
 #[cfg(windows)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn is_tty(fd: FileDescriptor) -> bool {
     use std::io::IsTerminal;
     use std::os::windows::io::BorrowedHandle;

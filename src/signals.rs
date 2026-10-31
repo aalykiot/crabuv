@@ -1,22 +1,53 @@
 use crate::event_loop::LoopHandle;
-pub use signal_hook::consts::signal as Kind;
 use signal_hook::low_level::emulate_default_handler;
 use std::collections::HashMap;
 
-#[cfg(target_family = "unix")]
-use signal_hook_mio::v1_0::Signals;
+#[cfg(unix)]
+mod unix_imports {
+    pub(crate) use mio::{Interest, Registry, Token};
+    pub(crate) use signal_hook_mio::v1_0::Signals;
+}
 
-#[cfg(target_family = "unix")]
-use mio::{Interest, Registry, Token};
+#[cfg(windows)]
+mod win_imports {
+    pub(crate) use crate::event_loop::Event;
+    pub(crate) use crossterm::event::Event as ConsoleEvent;
+    pub(crate) use mio::Waker;
+    pub(crate) use std::{sync::mpsc, sync::Arc};
+}
 
-#[cfg(target_family = "windows")]
-use std::{sync::mpsc, sync::Arc};
+#[cfg(unix)]
+use unix_imports::*;
 
-#[cfg(target_family = "windows")]
-use mio::Waker;
+#[cfg(windows)]
+use win_imports::*;
 
-#[cfg(target_family = "windows")]
-use crate::event_loop::Event;
+#[allow(non_snake_case)]
+pub mod Kind {
+    /// All signals from signal_hook.
+    pub use signal_hook::consts::signal::*;
+
+    /// Custom SIGWINCH support on Windows, where signal_hook doesn't
+    /// provide it. Windows never raises this signal itself.
+    #[cfg(windows)]
+    pub const SIGWINCH: i32 = 28;
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
+pub(crate) enum WinEvent {
+    Sigint,
+    Sigwinch,
+}
+
+impl From<WinEvent> for i32 {
+    fn from(value: WinEvent) -> Self {
+        match value {
+            WinEvent::Sigint => Kind::SIGINT,
+            WinEvent::Sigwinch => Kind::SIGWINCH,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Policy {
@@ -107,7 +138,7 @@ pub(crate) struct OsSignals {
 }
 
 impl OsSignals {
-    #[cfg(target_family = "unix")]
+    #[cfg(unix)]
     pub fn new(registry: &Registry) -> Self {
         let mut sources = Signals::new::<[_; 0], i32>([]).unwrap();
         let _ = registry.register(&mut sources, Token(1), Interest::READABLE);
@@ -118,22 +149,34 @@ impl OsSignals {
         }
     }
 
-    #[cfg(target_family = "windows")]
+    #[cfg(windows)]
     pub fn new(notifier: mpsc::Sender<Event>, waker: Arc<Waker>) -> Self {
-        // Spawn signal watching thread.
-        let on_signal_handler = move || {
-            notifier.send(Event::WinSigInt).unwrap();
-            waker.wake().unwrap();
-        };
+        // Handle Ctrl+C through the Windows console control handler.
+        ctrlc::set_handler({
+            let (notifier, waker) = (notifier.clone(), Arc::clone(&waker));
+            move || Self::notify(&notifier, &waker, WinEvent::Sigint)
+        })
+        .unwrap();
 
-        ctrlc::set_handler(on_signal_handler).unwrap();
+        // Monitor the console input queue for terminal resize events.
+        std::thread::spawn(move || loop {
+            if let Ok(ConsoleEvent::Resize(..)) = crossterm::event::read() {
+                Self::notify(&notifier, &waker, WinEvent::Sigwinch);
+            }
+        });
 
         OsSignals {
             handlers: HashMap::new(),
         }
     }
 
-    #[cfg(target_family = "unix")]
+    #[cfg(windows)]
+    fn notify(notifier: &mpsc::Sender<Event>, waker: &Waker, signal: WinEvent) {
+        notifier.send(Event::Windows(signal)).unwrap();
+        waker.wake().unwrap();
+    }
+
+    #[cfg(unix)]
     pub fn run_pending(&mut self, handle: LoopHandle) {
         // Going through the available signals.
         for signal in self.sources.pending() {
@@ -163,17 +206,17 @@ impl OsSignals {
         }
     }
 
-    #[cfg(target_family = "windows")]
-    pub fn run_pending(&mut self, handle: LoopHandle) {
-        // Note: In Windows, a dedicated thread is always on standby to listen for
-        // CTRL+C signals. Consequently, this function may be activated even if a
-        // signal handler was never initiated. Therefore, it's necessary to mimic
-        // the default action when no signals are registered or if the list of
-        // handlers is currently empty.
-        let handlers = match self.handlers.get_mut(&Kind::SIGINT) {
+    #[cfg(windows)]
+    pub fn run_pending(&mut self, handle: LoopHandle, event: WinEvent) {
+        // Note: on Windows, the event listeners (CTRL+C, console window resize, ...)
+        // run on dedicated threads that are always active, so this function can be
+        // invoked even if no signal handler was ever registered. In that case, or when
+        // the handler list for this signal is empty, we emulate the default behavior
+        // for the signal instead of silently swallowing the event.
+        let handlers = match self.handlers.get_mut(&event.into()) {
             Some(handlers) if !handlers.is_empty() => handlers,
             _ => {
-                emulate_default_handler(Kind::SIGINT).unwrap();
+                emulate_default_handler(event.into()).unwrap();
                 return;
             }
         };

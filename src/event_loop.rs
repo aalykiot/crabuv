@@ -12,6 +12,7 @@ use crate::signals::Policy;
 use crate::signals::SigNum;
 use crate::signals::Signal;
 use crate::signals::SignalHandle;
+use crate::signals::WinEvent;
 use crate::task::OnCompleteCallback;
 use crate::task::Output as TaskOutput;
 use crate::task::Task;
@@ -97,8 +98,8 @@ pub(crate) enum Event {
     ThreadPool(ResourceId, TaskOutput),
     /// A file-system change has been detected.
     FsWatch(ResourceId, Result<FsEvent>),
-    /// An interrupt signal detected (Windows platform).
-    WinSigInt,
+    /// A Windows-specific emulated signal event.
+    Windows(WinEvent),
     /// Terminal input has been received.
     TtyInput(ResourceId, Result<Vec<u8>>),
 }
@@ -262,6 +263,7 @@ impl EventLoop {
 
             // Note: Token(1) is another special token signaling an OS
             // signal is available for processing.
+            #[cfg(unix)]
             if event.token() == Token(1) {
                 self.signals.run_pending(self.handle());
                 continue;
@@ -285,7 +287,7 @@ impl EventLoop {
                 Event::Network(event) => self.process_network_event(event),
                 Event::ThreadPool(id, output) => self.process_finished_task(id, output),
                 Event::FsWatch(id, event) => self.process_fs_event(id, event),
-                Event::WinSigInt => self.signals.run_pending(self.handle()),
+                Event::Windows(event) => self.signals.run_pending(self.handle(), event),
                 Event::TtyInput(id, data) => self.process_tty_input(id, data),
             }
 
