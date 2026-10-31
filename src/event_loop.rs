@@ -12,7 +12,6 @@ use crate::signals::Policy;
 use crate::signals::SigNum;
 use crate::signals::Signal;
 use crate::signals::SignalHandle;
-use crate::signals::WinEvent;
 use crate::task::OnCompleteCallback;
 use crate::task::Output as TaskOutput;
 use crate::task::Task;
@@ -66,6 +65,9 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+#[cfg(windows)]
+use crate::signals::WinEvent;
+
 pub(crate) type BasicQueue = Vec<ResourceId>;
 
 enum Request {
@@ -98,10 +100,11 @@ pub(crate) enum Event {
     ThreadPool(ResourceId, TaskOutput),
     /// A file-system change has been detected.
     FsWatch(ResourceId, Result<FsEvent>),
-    /// A Windows-specific emulated signal event.
-    Windows(WinEvent),
     /// Terminal input has been received.
     TtyInput(ResourceId, Result<Vec<u8>>),
+    /// A Windows-specific emulated signal event.
+    #[cfg(windows)]
+    Windows(WinEvent),
 }
 
 #[derive(Debug)]
@@ -150,11 +153,11 @@ impl EventLoop {
         let waker = Arc::new(waker);
 
         // Monitor system signals through MIO.
-        #[cfg(target_family = "unix")]
+        #[cfg(unix)]
         let signals = OsSignals::new(&registry);
 
         // Monitor system signals through dedicated thread.
-        #[cfg(target_family = "windows")]
+        #[cfg(windows)]
         let signals = OsSignals::new(event_sender.clone(), Arc::clone(&waker));
 
         EventLoop {
@@ -287,8 +290,9 @@ impl EventLoop {
                 Event::Network(event) => self.process_network_event(event),
                 Event::ThreadPool(id, output) => self.process_finished_task(id, output),
                 Event::FsWatch(id, event) => self.process_fs_event(id, event),
-                Event::Windows(event) => self.signals.run_pending(self.handle(), event),
                 Event::TtyInput(id, data) => self.process_tty_input(id, data),
+                #[cfg(windows)]
+                Event::Windows(event) => self.signals.run_pending(self.handle(), event),
             }
 
             // Since each event might schedule additional I/O we need to process

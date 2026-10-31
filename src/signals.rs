@@ -35,11 +35,13 @@ pub mod Kind {
 
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
+#[cfg(windows)]
 pub(crate) enum WinEvent {
     Sigint,
     Sigwinch,
 }
 
+#[cfg(windows)]
 impl From<WinEvent> for i32 {
     fn from(value: WinEvent) -> Self {
         match value {
