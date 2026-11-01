@@ -55,7 +55,13 @@ fn main() {
     #[cfg(windows)]
     let stdin = std::io::stdin().as_raw_handle();
 
-    let tty = handle.tty(stdin);
+    let tty = match handle.tty(stdin) {
+        Ok(tty) => tty,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
 
     if let Err(e) = tty.set_mode(Mode::Raw) {
         eprintln!("Failed to enter raw mode: {e}");

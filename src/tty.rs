@@ -178,3 +178,23 @@ impl std::io::Write for FileDescriptorStream {
         self.file.flush()
     }
 }
+
+#[cfg(unix)]
+pub fn is_tty(fd: FileDescriptor) -> bool {
+    use crossterm::tty::IsTty;
+    fd.is_tty()
+}
+
+#[cfg(windows)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn is_tty(fd: FileDescriptor) -> bool {
+    use std::io::IsTerminal;
+    use std::os::windows::io::BorrowedHandle;
+
+    if fd.is_null() || fd as isize == -1 {
+        return false;
+    }
+
+    let handle = unsafe { BorrowedHandle::borrow_raw(fd) };
+    handle.is_terminal()
+}

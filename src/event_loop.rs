@@ -31,10 +31,12 @@ use crate::timers::Timer;
 use crate::timers::TimerHandle;
 use crate::timers::TimerKind;
 use crate::timers::TimersCollection;
+use crate::tty::is_tty;
 use crate::tty::FileDescriptor;
 use crate::tty::TtyHandle;
 use crate::tty::TtyReader;
 use anyhow::anyhow;
+use anyhow::bail;
 use anyhow::Result;
 use mio::net::TcpListener as MioListener;
 use mio::net::TcpStream as MioSocket;
@@ -62,6 +64,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
+
+#[cfg(windows)]
+use crate::signals::WinEvent;
 
 pub(crate) type BasicQueue = Vec<ResourceId>;
 
@@ -95,10 +100,11 @@ pub(crate) enum Event {
     ThreadPool(ResourceId, TaskOutput),
     /// A file-system change has been detected.
     FsWatch(ResourceId, Result<FsEvent>),
-    /// An interrupt signal detected (Windows platform).
-    WinSigInt,
     /// Terminal input has been received.
     TtyInput(ResourceId, Result<Vec<u8>>),
+    /// A Windows-specific emulated signal event.
+    #[cfg(windows)]
+    Windows(WinEvent),
 }
 
 #[derive(Debug)]
@@ -147,11 +153,11 @@ impl EventLoop {
         let waker = Arc::new(waker);
 
         // Monitor system signals through MIO.
-        #[cfg(target_family = "unix")]
+        #[cfg(unix)]
         let signals = OsSignals::new(&registry);
 
         // Monitor system signals through dedicated thread.
-        #[cfg(target_family = "windows")]
+        #[cfg(windows)]
         let signals = OsSignals::new(event_sender.clone(), Arc::clone(&waker));
 
         EventLoop {
@@ -260,6 +266,7 @@ impl EventLoop {
 
             // Note: Token(1) is another special token signaling an OS
             // signal is available for processing.
+            #[cfg(unix)]
             if event.token() == Token(1) {
                 self.signals.run_pending(self.handle());
                 continue;
@@ -283,8 +290,9 @@ impl EventLoop {
                 Event::Network(event) => self.process_network_event(event),
                 Event::ThreadPool(id, output) => self.process_finished_task(id, output),
                 Event::FsWatch(id, event) => self.process_fs_event(id, event),
-                Event::WinSigInt => self.signals.run_pending(self.handle()),
                 Event::TtyInput(id, data) => self.process_tty_input(id, data),
+                #[cfg(windows)]
+                Event::Windows(event) => self.signals.run_pending(self.handle(), event),
             }
 
             // Since each event might schedule additional I/O we need to process
@@ -1068,13 +1076,18 @@ impl LoopHandle {
     }
 
     /// Creates a TTY handle wrapping the given file descriptor.
-    pub fn tty(&self, raw_fd: FileDescriptor) -> TtyHandle {
+    pub fn tty(&self, raw_fd: FileDescriptor) -> Result<TtyHandle> {
+        // Not all file descriptors are TTYs.
+        if !is_tty(raw_fd) {
+            bail!("The file descriptor provided is not a TTY");
+        }
+
         // TTY resources are added to the resource map only after they start
         // reading terminal input, so for now we'll assign them a null ID.
         let id = Rc::new(Cell::new(DefaultKey::null()));
         let handle = self.clone();
 
-        TtyHandle { id, raw_fd, handle }
+        Ok(TtyHandle { id, raw_fd, handle })
     }
 
     /// Starts reading from the TTY stream.
