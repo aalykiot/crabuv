@@ -218,7 +218,9 @@ impl OsSignals {
         let handlers = match self.handlers.get_mut(&event.into()) {
             Some(handlers) if !handlers.is_empty() => handlers,
             _ => {
-                emulate_default_handler(event.into()).unwrap();
+                // Some events (e.g. SIGWINCH) have no default handler on on Windows.
+                // In such cases, this call may fail, which is safe to ignore.
+                let _ = emulate_default_handler(event.into());
                 return;
             }
         };
