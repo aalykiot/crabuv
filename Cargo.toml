@@ -34,3 +34,4 @@ signal-hook-mio = { version = "0.3.0", features = ["support-v1_0"] }
 
 [target.'cfg(windows)'.dependencies]
 ctrlc = "3.5.2"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }

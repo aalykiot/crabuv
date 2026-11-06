@@ -6,6 +6,7 @@ use anyhow::bail;
 use anyhow::Result;
 use crossterm::terminal;
 use std::fs;
+use std::io;
 use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -18,6 +19,9 @@ pub type FileDescriptor = std::os::fd::RawFd;
 
 #[cfg(windows)]
 pub type FileDescriptor = std::os::windows::io::RawHandle;
+
+#[cfg(windows)]
+use windows_sys::Win32::System::Console::{GetConsoleScreenBufferInfo, CONSOLE_SCREEN_BUFFER_INFO};
 
 /// Terminal input mode.
 #[derive(Debug)]
@@ -129,7 +133,6 @@ impl TtyHandle {
     /// Gets the current window size.
     #[cfg(unix)]
     pub fn window_size(&self) -> Result<WindowSize> {
-        use std::io;
         let mut size: libc::winsize = unsafe { std::mem::zeroed() };
         let result = unsafe { libc::ioctl(self.raw_fd, libc::TIOCGWINSZ, &mut size) };
 
@@ -146,7 +149,19 @@ impl TtyHandle {
     /// Gets the current window size.
     #[cfg(windows)]
     pub fn window_size(&self) -> Result<WindowSize> {
-        unimplemented!()
+        let mut size: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
+        let result = unsafe { GetConsoleScreenBufferInfo(self.raw_fd, &mut size) };
+
+        if result == 0 {
+            bail!(io::Error::last_os_error());
+        }
+
+        // Note: srWindow contains inclusive coordinates, not dimensions, so we calculate
+        // the visible width and height by subtracting the boundaries and adding 1.
+        let columns = (size.srWindow.Right - size.srWindow.Left + 1) as u16;
+        let rows = (size.srWindow.Bottom - size.srWindow.Top + 1) as u16;
+
+        Ok(WindowSize { columns, rows })
     }
 
     /// Returns a handle to the event-loop.
