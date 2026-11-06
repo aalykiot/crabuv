@@ -10,6 +10,7 @@ use crabuv::RunMode;
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 
@@ -19,6 +20,7 @@ fn main() {
 
     #[cfg(unix)]
     let stdin = std::io::stdin().as_raw_fd();
+
     #[cfg(windows)]
     let stdin = std::io::stdin().as_raw_handle();
 
