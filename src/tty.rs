@@ -21,7 +21,9 @@ pub type FileDescriptor = std::os::fd::RawFd;
 pub type FileDescriptor = std::os::windows::io::RawHandle;
 
 #[cfg(windows)]
-use windows_sys::Win32::System::Console::{GetConsoleScreenBufferInfo, CONSOLE_SCREEN_BUFFER_INFO};
+use windows_sys::Win32::System::Console::{
+    GetConsoleScreenBufferInfo, SetConsoleCP, SetConsoleOutputCP, CONSOLE_SCREEN_BUFFER_INFO,
+};
 
 /// Terminal input mode.
 #[derive(Debug)]
@@ -237,4 +239,19 @@ pub fn is_tty(fd: FileDescriptor) -> bool {
 
     let handle = unsafe { BorrowedHandle::borrow_raw(fd) };
     handle.is_terminal()
+}
+
+/// Sets the Windows console input and output code pages to UTF-8.
+#[cfg(windows)]
+pub fn set_utf8_code_pages() -> Result<()> {
+    // Without this, conhost reads our UTF-8 through the ANSI code page
+    // (CP1252, CP932, ...) and the bar renders as mojibake.
+    if unsafe { SetConsoleOutputCP(65001) } == 0 {
+        bail!(io::Error::last_os_error());
+    }
+
+    // Set the input code page to UTF-8 (best effort).
+    unsafe { SetConsoleCP(65001) };
+
+    Ok(())
 }
