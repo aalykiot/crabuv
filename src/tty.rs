@@ -2,6 +2,7 @@ use crate::event_loop::LoopHandle;
 use crate::resource::Resource;
 use crate::resource::ResourceId;
 use crate::resource::Shared;
+use anyhow::bail;
 use anyhow::Result;
 use crossterm::terminal;
 use std::fs;
@@ -19,11 +20,17 @@ pub type FileDescriptor = std::os::fd::RawFd;
 pub type FileDescriptor = std::os::windows::io::RawHandle;
 
 /// Terminal input mode.
+#[derive(Debug)]
 pub enum Mode {
-    /// Line-buffered, processed by terminal driver.
     Normal,
-    /// Input delivered directly, bypassing terminal driver.
     Raw,
+}
+
+/// Represents the visible dimensions of a terminal window.
+#[derive(Debug)]
+pub struct WindowSize {
+    pub columns: u16,
+    pub rows: u16,
 }
 
 /// The internal worker state for a TTY resource.
@@ -120,8 +127,26 @@ impl TtyHandle {
     }
 
     /// Gets the current window size.
-    pub fn window_size(&self) -> Result<terminal::WindowSize> {
-        terminal::window_size().map_err(Into::into)
+    #[cfg(unix)]
+    pub fn window_size(&self) -> Result<WindowSize> {
+        use std::io;
+        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::ioctl(self.raw_fd, libc::TIOCGWINSZ, &mut size) };
+
+        if result == -1 {
+            bail!(io::Error::last_os_error());
+        }
+
+        Ok(WindowSize {
+            columns: size.ws_col,
+            rows: size.ws_row,
+        })
+    }
+
+    /// Gets the current window size.
+    #[cfg(windows)]
+    pub fn window_size(&self) -> Result<WindowSize> {
+        unimplemented!()
     }
 
     /// Returns a handle to the event-loop.
