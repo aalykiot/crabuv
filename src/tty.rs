@@ -13,18 +13,41 @@ use std::sync::mpsc;
 pub type OnReadCallback = Box<dyn FnMut(TtyHandle, Result<Vec<u8>>) + 'static>;
 
 #[cfg(unix)]
+pub(crate) mod unix_imports {
+    pub use rustix::termios::tcgetattr;
+    pub use rustix::termios::tcgetwinsize;
+    pub use rustix::termios::tcsetattr;
+    pub use rustix::termios::OptionalActions;
+    pub use rustix::termios::OutputModes;
+    pub use std::os::fd::BorrowedFd;
+    pub use std::os::fd::FromRawFd;
+    pub use std::os::unix::io::AsRawFd;
+}
+
+#[cfg(unix)]
 pub type FileDescriptor = std::os::fd::RawFd;
 
 #[cfg(unix)]
-use rustix::termios::{tcgetattr, tcgetwinsize, tcsetattr, OptionalActions, OutputModes};
+use unix_imports::*;
+
+#[cfg(windows)]
+pub(crate) mod windows_imports {
+    pub use anyhow::bail;
+    pub use std::io::IsTerminal;
+    pub use std::os::windows::io::AsRawHandle;
+    pub use std::os::windows::io::BorrowedHandle;
+    pub use std::os::windows::io::FromRawHandle;
+    pub use windows_sys::Win32::System::Console::GetConsoleScreenBufferInfo;
+    pub use windows_sys::Win32::System::Console::SetConsoleCP;
+    pub use windows_sys::Win32::System::Console::SetConsoleOutputCP;
+    pub use windows_sys::Win32::System::Console::CONSOLE_SCREEN_BUFFER_INFO;
+}
 
 #[cfg(windows)]
 pub type FileDescriptor = std::os::windows::io::RawHandle;
 
 #[cfg(windows)]
-use windows_sys::Win32::System::Console::{
-    GetConsoleScreenBufferInfo, SetConsoleCP, SetConsoleOutputCP, CONSOLE_SCREEN_BUFFER_INFO,
-};
+use windows_imports::*;
 
 /// Terminal input mode.
 #[derive(Debug)]
@@ -117,7 +140,6 @@ impl TtyHandle {
 
     #[cfg(unix)]
     fn enable_opost(&self) -> Result<()> {
-        use std::os::fd::BorrowedFd;
         let fd = unsafe { BorrowedFd::borrow_raw(self.raw_fd) };
         let mut termios = tcgetattr(fd)?;
 
@@ -132,10 +154,15 @@ impl TtyHandle {
     /// Applies the specified terminal mode to the TTY.
     pub fn set_mode(&self, mode: Mode) -> Result<()> {
         match mode {
-            Mode::Normal => terminal::disable_raw_mode().map_err(Into::into),
             Mode::Raw => {
                 terminal::enable_raw_mode()?;
-                self.enable_opost()
+                #[cfg(unix)]
+                self.enable_opost()?;
+                Ok(())
+            }
+            Mode::Normal => {
+                terminal::disable_raw_mode()?;
+                Ok(())
             }
         }
     }
@@ -143,7 +170,6 @@ impl TtyHandle {
     /// Gets the current window size.
     #[cfg(unix)]
     pub fn window_size(&self) -> Result<WindowSize> {
-        use std::os::fd::BorrowedFd;
         let fd = unsafe { BorrowedFd::borrow_raw(self.raw_fd) };
         let size = tcgetwinsize(fd)?;
 
@@ -188,10 +214,6 @@ pub(crate) struct FileDescriptorStream {
 impl From<FileDescriptor> for FileDescriptorStream {
     #[cfg(unix)]
     fn from(value: FileDescriptor) -> Self {
-        use std::os::fd::BorrowedFd;
-        use std::os::fd::FromRawFd;
-        use std::os::unix::io::AsRawFd;
-
         // Safety: fd is valid for the duration of this call.
         let borrowed = unsafe { BorrowedFd::borrow_raw(value) };
         let file = unsafe { ManuallyDrop::new(fs::File::from_raw_fd(borrowed.as_raw_fd())) };
@@ -201,10 +223,6 @@ impl From<FileDescriptor> for FileDescriptorStream {
 
     #[cfg(windows)]
     fn from(value: FileDescriptor) -> Self {
-        use std::os::windows::io::AsRawHandle;
-        use std::os::windows::io::BorrowedHandle;
-        use std::os::windows::io::FromRawHandle;
-
         // Safety: fd is valid for the duration of this call.
         let borrowed = unsafe { BorrowedHandle::borrow_raw(value) };
         let file =
@@ -238,13 +256,6 @@ pub fn is_tty(fd: FileDescriptor) -> bool {
 #[cfg(windows)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn is_tty(fd: FileDescriptor) -> bool {
-    use std::io::IsTerminal;
-    use std::os::windows::io::BorrowedHandle;
-
-    if fd.is_null() || fd as isize == -1 {
-        return false;
-    }
-
     let handle = unsafe { BorrowedHandle::borrow_raw(fd) };
     handle.is_terminal()
 }
@@ -255,7 +266,7 @@ pub fn set_utf8_code_pages() -> Result<()> {
     // Without this, conhost reads our UTF-8 through the ANSI code page
     // (CP1252, CP932, ...) and the bar renders as mojibake.
     if unsafe { SetConsoleOutputCP(65001) } == 0 {
-        bail!(io::Error::last_os_error());
+        bail!(std::io::Error::last_os_error());
     }
 
     // Set the input code page to UTF-8 (best effort).
