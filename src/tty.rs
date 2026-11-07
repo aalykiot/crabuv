@@ -2,11 +2,9 @@ use crate::event_loop::LoopHandle;
 use crate::resource::Resource;
 use crate::resource::ResourceId;
 use crate::resource::Shared;
-use anyhow::bail;
 use anyhow::Result;
 use crossterm::terminal;
 use std::fs;
-use std::io;
 use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -16,6 +14,9 @@ pub type OnReadCallback = Box<dyn FnMut(TtyHandle, Result<Vec<u8>>) + 'static>;
 
 #[cfg(unix)]
 pub type FileDescriptor = std::os::fd::RawFd;
+
+#[cfg(unix)]
+use rustix::termios::{tcgetattr, tcgetwinsize, tcsetattr, OptionalActions, OutputModes};
 
 #[cfg(windows)]
 pub type FileDescriptor = std::os::windows::io::RawHandle;
@@ -114,33 +115,37 @@ impl TtyHandle {
         self.handle.tty_close(Rc::clone(&self.id));
     }
 
-    /// Sets the TTY to raw mode.
-    fn enable_raw_mode(&self) -> Result<()> {
-        terminal::enable_raw_mode().map_err(Into::into)
-    }
+    #[cfg(unix)]
+    fn enable_opost(&self) -> Result<()> {
+        use std::os::fd::BorrowedFd;
+        let fd = unsafe { BorrowedFd::borrow_raw(self.raw_fd) };
+        let mut termios = tcgetattr(fd)?;
 
-    /// Disables raw mode, restoring the terminal to its original settings.
-    pub fn disable_raw_mode(&self) -> Result<()> {
-        terminal::disable_raw_mode().map_err(Into::into)
+        // Raw mode turns off OPOST, so "\n" no longer moves the cursor to the
+        // start of the next line. Turn it back on.
+        termios.output_modes |= OutputModes::OPOST | OutputModes::ONLCR;
+        tcsetattr(fd, OptionalActions::Now, &termios)?;
+
+        Ok(())
     }
 
     /// Applies the specified terminal mode to the TTY.
     pub fn set_mode(&self, mode: Mode) -> Result<()> {
         match mode {
-            Mode::Normal => self.disable_raw_mode(),
-            Mode::Raw => self.enable_raw_mode(),
+            Mode::Normal => terminal::disable_raw_mode().map_err(Into::into),
+            Mode::Raw => {
+                terminal::enable_raw_mode()?;
+                self.enable_opost()
+            }
         }
     }
 
     /// Gets the current window size.
     #[cfg(unix)]
     pub fn window_size(&self) -> Result<WindowSize> {
-        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-        let result = unsafe { libc::ioctl(self.raw_fd, libc::TIOCGWINSZ, &mut size) };
-
-        if result == -1 {
-            bail!(io::Error::last_os_error());
-        }
+        use std::os::fd::BorrowedFd;
+        let fd = unsafe { BorrowedFd::borrow_raw(self.raw_fd) };
+        let size = tcgetwinsize(fd)?;
 
         Ok(WindowSize {
             columns: size.ws_col,
@@ -151,6 +156,9 @@ impl TtyHandle {
     /// Gets the current window size.
     #[cfg(windows)]
     pub fn window_size(&self) -> Result<WindowSize> {
+        use anyhow::bail;
+        use std::io;
+
         let mut size: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
         let result = unsafe { GetConsoleScreenBufferInfo(self.raw_fd, &mut size) };
 
