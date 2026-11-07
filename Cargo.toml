@@ -2,7 +2,7 @@
 name = "crabuv"
 description = "A multi-platform event loop library 🎡"
 authors = ["Alex Alikiotis <alexalikiotis5@gmail.com>"]
-version = "0.5.3"
+version = "0.5.4"
 repository = "https://gitlab.com/aalykiot/crabuv"
 license = "MIT"
 readme = "README.md"
@@ -29,7 +29,7 @@ default-features = false
 features = ["channel", "iterator"]
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.191"
+rustix = "1.1.6"
 signal-hook-mio = { version = "0.3.0", features = ["support-v1_0"] }
 
 [target.'cfg(windows)'.dependencies]

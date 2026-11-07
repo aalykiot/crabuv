@@ -2,11 +2,9 @@ use crate::event_loop::LoopHandle;
 use crate::resource::Resource;
 use crate::resource::ResourceId;
 use crate::resource::Shared;
-use anyhow::bail;
 use anyhow::Result;
 use crossterm::terminal;
 use std::fs;
-use std::io;
 use std::io::Write;
 use std::mem::ManuallyDrop;
 use std::rc::Rc;
@@ -15,15 +13,41 @@ use std::sync::mpsc;
 pub type OnReadCallback = Box<dyn FnMut(TtyHandle, Result<Vec<u8>>) + 'static>;
 
 #[cfg(unix)]
+pub(crate) mod unix_imports {
+    pub use rustix::termios::tcgetattr;
+    pub use rustix::termios::tcgetwinsize;
+    pub use rustix::termios::tcsetattr;
+    pub use rustix::termios::OptionalActions;
+    pub use rustix::termios::OutputModes;
+    pub use std::os::fd::BorrowedFd;
+    pub use std::os::fd::FromRawFd;
+    pub use std::os::unix::io::AsRawFd;
+}
+
+#[cfg(unix)]
 pub type FileDescriptor = std::os::fd::RawFd;
+
+#[cfg(unix)]
+use unix_imports::*;
+
+#[cfg(windows)]
+pub(crate) mod windows_imports {
+    pub use anyhow::bail;
+    pub use std::io::IsTerminal;
+    pub use std::os::windows::io::AsRawHandle;
+    pub use std::os::windows::io::BorrowedHandle;
+    pub use std::os::windows::io::FromRawHandle;
+    pub use windows_sys::Win32::System::Console::GetConsoleScreenBufferInfo;
+    pub use windows_sys::Win32::System::Console::SetConsoleCP;
+    pub use windows_sys::Win32::System::Console::SetConsoleOutputCP;
+    pub use windows_sys::Win32::System::Console::CONSOLE_SCREEN_BUFFER_INFO;
+}
 
 #[cfg(windows)]
 pub type FileDescriptor = std::os::windows::io::RawHandle;
 
 #[cfg(windows)]
-use windows_sys::Win32::System::Console::{
-    GetConsoleScreenBufferInfo, SetConsoleCP, SetConsoleOutputCP, CONSOLE_SCREEN_BUFFER_INFO,
-};
+use windows_imports::*;
 
 /// Terminal input mode.
 #[derive(Debug)]
@@ -114,33 +138,40 @@ impl TtyHandle {
         self.handle.tty_close(Rc::clone(&self.id));
     }
 
-    /// Sets the TTY to raw mode.
-    fn enable_raw_mode(&self) -> Result<()> {
-        terminal::enable_raw_mode().map_err(Into::into)
-    }
+    #[cfg(unix)]
+    fn enable_opost(&self) -> Result<()> {
+        let fd = unsafe { BorrowedFd::borrow_raw(self.raw_fd) };
+        let mut termios = tcgetattr(fd)?;
 
-    /// Disables raw mode, restoring the terminal to its original settings.
-    pub fn disable_raw_mode(&self) -> Result<()> {
-        terminal::disable_raw_mode().map_err(Into::into)
+        // Raw mode turns off OPOST, so "\n" no longer moves the cursor to the
+        // start of the next line. Turn it back on.
+        termios.output_modes |= OutputModes::OPOST | OutputModes::ONLCR;
+        tcsetattr(fd, OptionalActions::Now, &termios)?;
+
+        Ok(())
     }
 
     /// Applies the specified terminal mode to the TTY.
     pub fn set_mode(&self, mode: Mode) -> Result<()> {
         match mode {
-            Mode::Normal => self.disable_raw_mode(),
-            Mode::Raw => self.enable_raw_mode(),
+            Mode::Raw => {
+                terminal::enable_raw_mode()?;
+                #[cfg(unix)]
+                self.enable_opost()?;
+                Ok(())
+            }
+            Mode::Normal => {
+                terminal::disable_raw_mode()?;
+                Ok(())
+            }
         }
     }
 
     /// Gets the current window size.
     #[cfg(unix)]
     pub fn window_size(&self) -> Result<WindowSize> {
-        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-        let result = unsafe { libc::ioctl(self.raw_fd, libc::TIOCGWINSZ, &mut size) };
-
-        if result == -1 {
-            bail!(io::Error::last_os_error());
-        }
+        let fd = unsafe { BorrowedFd::borrow_raw(self.raw_fd) };
+        let size = tcgetwinsize(fd)?;
 
         Ok(WindowSize {
             columns: size.ws_col,
@@ -151,6 +182,9 @@ impl TtyHandle {
     /// Gets the current window size.
     #[cfg(windows)]
     pub fn window_size(&self) -> Result<WindowSize> {
+        use anyhow::bail;
+        use std::io;
+
         let mut size: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
         let result = unsafe { GetConsoleScreenBufferInfo(self.raw_fd, &mut size) };
 
@@ -180,10 +214,6 @@ pub(crate) struct FileDescriptorStream {
 impl From<FileDescriptor> for FileDescriptorStream {
     #[cfg(unix)]
     fn from(value: FileDescriptor) -> Self {
-        use std::os::fd::BorrowedFd;
-        use std::os::fd::FromRawFd;
-        use std::os::unix::io::AsRawFd;
-
         // Safety: fd is valid for the duration of this call.
         let borrowed = unsafe { BorrowedFd::borrow_raw(value) };
         let file = unsafe { ManuallyDrop::new(fs::File::from_raw_fd(borrowed.as_raw_fd())) };
@@ -193,10 +223,6 @@ impl From<FileDescriptor> for FileDescriptorStream {
 
     #[cfg(windows)]
     fn from(value: FileDescriptor) -> Self {
-        use std::os::windows::io::AsRawHandle;
-        use std::os::windows::io::BorrowedHandle;
-        use std::os::windows::io::FromRawHandle;
-
         // Safety: fd is valid for the duration of this call.
         let borrowed = unsafe { BorrowedHandle::borrow_raw(value) };
         let file =
@@ -230,13 +256,6 @@ pub fn is_tty(fd: FileDescriptor) -> bool {
 #[cfg(windows)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn is_tty(fd: FileDescriptor) -> bool {
-    use std::io::IsTerminal;
-    use std::os::windows::io::BorrowedHandle;
-
-    if fd.is_null() || fd as isize == -1 {
-        return false;
-    }
-
     let handle = unsafe { BorrowedHandle::borrow_raw(fd) };
     handle.is_terminal()
 }
@@ -247,7 +266,7 @@ pub fn set_utf8_code_pages() -> Result<()> {
     // Without this, conhost reads our UTF-8 through the ANSI code page
     // (CP1252, CP932, ...) and the bar renders as mojibake.
     if unsafe { SetConsoleOutputCP(65001) } == 0 {
-        bail!(io::Error::last_os_error());
+        bail!(std::io::Error::last_os_error());
     }
 
     // Set the input code page to UTF-8 (best effort).
