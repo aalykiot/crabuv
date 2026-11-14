@@ -606,8 +606,8 @@ impl EventLoop {
         // We need to take the handle here due to borrowing constraints.
         let handle = self.handle();
 
-        if let Some(resource) = self.resources.get_mut(id.get()) {
-            resource.destroy(handle.clone());
+        if let Some(stream) = self.resources.get_as::<TcpStream>(id.get()) {
+            stream.shutdown_write();
             callback(handle);
         }
     }

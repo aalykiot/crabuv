@@ -54,9 +54,6 @@ pub(crate) struct TcpStream {
 
 impl Resource for TcpStream {
     fn destroy(&mut self, handle: LoopHandle) {
-        // Shutdown the write side of the stream.
-        self.socket.shutdown(Shutdown::Write).unwrap();
-
         // Run any user defined close action.
         if let Some(mut callback) = self.on_close.take() {
             callback(handle);
@@ -238,6 +235,11 @@ impl TcpStream {
                 .reregister(socket, token, Interest::READABLE)
                 .unwrap();
         }
+    }
+
+    /// Shuts down the write side of the socket.
+    pub fn shutdown_write(&self) {
+        self.socket.shutdown(Shutdown::Write).unwrap();
     }
 
     /// Returns information about the connected socket.
